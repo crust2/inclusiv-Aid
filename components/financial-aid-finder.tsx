@@ -8,7 +8,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { ArrowLeft, ArrowRight, ExternalLink, Volume2, Bell, CheckCircle } from "lucide-react"
+import {
+  ArrowLeft,
+  ArrowRight,
+  ExternalLink,
+  Volume2,
+  Bell,
+  CheckCircle,
+  Loader2,
+  MapPin,
+  Calendar,
+  DollarSign,
+} from "lucide-react"
 
 interface FormData {
   income: string
@@ -22,22 +33,10 @@ interface Scheme {
   name: string
   summary: string
   howToApply: string
+  eligibility: string
+  amount: string
+  deadline: string
 }
-
-const mockSchemes: Scheme[] = [
-  {
-    name: "National Scholarship Portal - Merit Scholarship",
-    summary: "Merit-based scholarship for students from economically weaker sections pursuing higher education.",
-    howToApply:
-      "Visit NSP portal, register with Aadhaar, fill application form, upload required documents, and submit before deadline.",
-  },
-  {
-    name: "Post Matric Scholarship for SC/ST Students",
-    summary: "Financial assistance for SC/ST students pursuing post-matriculation studies.",
-    howToApply:
-      "Apply through state scholarship portal, provide caste certificate, income certificate, and academic records.",
-  },
-]
 
 const states = [
   "Andhra Pradesh",
@@ -68,6 +67,15 @@ const states = [
   "Uttar Pradesh",
   "Uttarakhand",
   "West Bengal",
+  // Union Territories
+  "Andaman and Nicobar Islands",
+  "Chandigarh",
+  "Dadra and Nagar Haveli and Daman and Diu",
+  "Delhi",
+  "Jammu and Kashmir",
+  "Ladakh",
+  "Lakshadweep",
+  "Puducherry",
 ]
 
 export default function FinancialAidFinder() {
@@ -81,15 +89,41 @@ export default function FinancialAidFinder() {
   })
   const [showResults, setShowResults] = useState(false)
   const [showReminderModal, setShowReminderModal] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [schemes, setSchemes] = useState<Scheme[]>([])
 
   const totalSteps = 5
   const progress = (currentStep / totalSteps) * 100
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (currentStep < totalSteps) {
       setCurrentStep(currentStep + 1)
     } else {
-      setShowResults(true)
+      setLoading(true)
+      try {
+        const response = await fetch("/api/schemes", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(formData),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          setSchemes(data.schemes)
+          console.log("[v0] Received schemes:", data.schemes.length)
+        } else {
+          console.error("[v0] Failed to fetch schemes")
+          setSchemes([])
+        }
+      } catch (error) {
+        console.error("[v0] Error fetching schemes:", error)
+        setSchemes([])
+      } finally {
+        setLoading(false)
+        setShowResults(true)
+      }
     }
   }
 
@@ -110,6 +144,22 @@ export default function FinancialAidFinder() {
     setTimeout(() => setShowReminderModal(false), 2000)
   }
 
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <Card>
+          <CardContent className="text-center py-12">
+            <Loader2 className="w-12 h-12 text-indigo-600 mx-auto mb-4 animate-spin" />
+            <h3 className="text-lg font-semibold mb-2">Finding Schemes for You</h3>
+            <p className="text-gray-600">
+              Analyzing your profile and location to find the best financial aid opportunities...
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   if (showResults) {
     return (
       <div className="max-w-4xl mx-auto p-6">
@@ -119,25 +169,50 @@ export default function FinancialAidFinder() {
             onClick={() => {
               setShowResults(false)
               setCurrentStep(1)
+              setSchemes([])
             }}
             className="mb-4"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Form
           </Button>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Available Schemes</h2>
-          <p className="text-gray-600">Based on your information, here are the schemes you may be eligible for:</p>
+          <div className="flex items-center gap-2 mb-2">
+            <MapPin className="w-5 h-5 text-indigo-600" />
+            <h2 className="text-2xl font-bold text-gray-900">Available Schemes for {formData.state}</h2>
+          </div>
+          <p className="text-gray-600">
+            Based on your profile, here are {schemes.length} schemes you may be eligible for:
+          </p>
         </div>
 
-        {mockSchemes.length > 0 ? (
+        {schemes.length > 0 ? (
           <div className="grid gap-6">
-            {mockSchemes.map((scheme, index) => (
+            {schemes.map((scheme, index) => (
               <Card key={index} className="card-hover">
                 <CardHeader>
-                  <CardTitle className="text-lg">{scheme.name}</CardTitle>
+                  <CardTitle className="text-lg flex items-start justify-between">
+                    <span>{scheme.name}</span>
+                    <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-2 py-1 rounded">
+                      <DollarSign className="w-4 h-4" />
+                      {scheme.amount}
+                    </div>
+                  </CardTitle>
                   <CardDescription>{scheme.summary}</CardDescription>
                 </CardHeader>
                 <CardContent>
+                  <div className="grid md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <h4 className="font-semibold mb-2 text-indigo-600">Eligibility:</h4>
+                      <p className="text-sm text-gray-600">{scheme.eligibility}</p>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold mb-2 text-red-600 flex items-center gap-1">
+                        <Calendar className="w-4 h-4" />
+                        Deadline:
+                      </h4>
+                      <p className="text-sm text-gray-600">{scheme.deadline}</p>
+                    </div>
+                  </div>
                   <div className="mb-4">
                     <h4 className="font-semibold mb-2">How to Apply:</h4>
                     <p className="text-sm text-gray-600">{scheme.howToApply}</p>
@@ -150,7 +225,11 @@ export default function FinancialAidFinder() {
                     <Button
                       variant="outline"
                       className="text-blue-600 border-blue-600 hover:bg-blue-50 bg-transparent"
-                      onClick={() => handleSpeak(`${scheme.name}. ${scheme.summary}. ${scheme.howToApply}`)}
+                      onClick={() =>
+                        handleSpeak(
+                          `${scheme.name}. ${scheme.summary}. Eligibility: ${scheme.eligibility}. Amount: ${scheme.amount}. Deadline: ${scheme.deadline}. ${scheme.howToApply}`,
+                        )
+                      }
                     >
                       <Volume2 className="w-4 h-4 mr-2" />
                       Listen
@@ -171,7 +250,9 @@ export default function FinancialAidFinder() {
         ) : (
           <Card>
             <CardContent className="text-center py-8">
-              <p className="text-gray-600">No schemes found based on your criteria.</p>
+              <p className="text-gray-600">
+                No schemes found based on your criteria. Please try adjusting your information or contact support.
+              </p>
             </CardContent>
           </Card>
         )}
