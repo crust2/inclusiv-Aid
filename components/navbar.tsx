@@ -1,6 +1,8 @@
 "use client"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Globe } from "lucide-react"
+import Image from "next/image"
+import { languageNames } from "@/lib/translations"
 
 interface NavbarProps {
   currentLanguage: string
@@ -9,11 +11,17 @@ interface NavbarProps {
 
 export default function Navbar({ currentLanguage, onLanguageChange }: NavbarProps) {
   return (
-    <nav className="bg-white shadow-sm border-b border-gray-200 px-4 py-3">
+    <nav className="bg-white shadow-lg border-b border-gray-200 px-4 py-3">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-sm">IA</span>
+        <div className="flex items-center space-x-3">
+          <div className="w-10 h-10 relative">
+            <Image
+              src="/images/inclusivaid-logo.png"
+              alt="InclusivAid Logo"
+              width={40}
+              height={40}
+              className="rounded-lg object-contain"
+            />
           </div>
           <h1 className="text-xl font-bold text-gray-900">InclusivAid</h1>
         </div>
@@ -21,13 +29,15 @@ export default function Navbar({ currentLanguage, onLanguageChange }: NavbarProp
         <div className="flex items-center space-x-2">
           <Globe className="w-4 h-4 text-gray-500" />
           <Select value={currentLanguage} onValueChange={onLanguageChange}>
-            <SelectTrigger className="w-32">
+            <SelectTrigger className="w-40">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="en">English</SelectItem>
-              <SelectItem value="hi">हिंदी</SelectItem>
-              <SelectItem value="ta">தமிழ்</SelectItem>
+            <SelectContent className="max-h-60 overflow-y-auto">
+              {Object.entries(languageNames).map(([code, name]) => (
+                <SelectItem key={code} value={code}>
+                  {name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

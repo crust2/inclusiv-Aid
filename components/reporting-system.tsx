@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,7 +9,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Send, ChevronDown, CheckCircle } from "lucide-react"
+import { Send, ChevronDown, CheckCircle, AlertCircle } from "lucide-react"
+import { collection, addDoc, serverTimestamp } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 
 interface ReportData {
   institutionName: string
@@ -32,14 +33,56 @@ export default function ReportingSystem() {
   })
   const [showContactDetails, setShowContactDetails] = useState(false)
   const [submitted, setSubmitted] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  if (!db) {
+    return (
+      <div className="max-w-2xl mx-auto p-6">
+        <Card>
+          <CardHeader className="text-center">
+            <div className="mx-auto w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mb-4">
+              <AlertCircle className="w-6 h-6 text-red-600" />
+            </div>
+            <CardTitle className="text-2xl font-bold text-red-600">Service Unavailable</CardTitle>
+            <CardDescription>
+              The reporting system is currently unavailable. Please contact the administrator to configure Firebase.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    )
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!reportData.institutionName || !reportData.problemType || !reportData.details) {
       alert("Please fill in all required fields.")
       return
     }
-    setSubmitted(true)
+
+    setIsSubmitting(true)
+    try {
+      console.log("[v0] Attempting to submit report to Firebase...")
+      console.log("[v0] Report data:", reportData)
+
+      const docRef = await addDoc(collection(db, "reports"), {
+        ...reportData,
+        timestamp: serverTimestamp(),
+        status: "pending",
+      })
+
+      console.log("[v0] Report submitted successfully with ID:", docRef.id)
+      setSubmitted(true)
+    } catch (error) {
+      console.error("[v0] Error submitting report:", error)
+      if (error instanceof Error) {
+        console.error("[v0] Error message:", error.message)
+        console.error("[v0] Error stack:", error.stack)
+      }
+      alert("Failed to submit report. Please try again.")
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   if (submitted) {
@@ -171,9 +214,9 @@ export default function ReportingSystem() {
               </CollapsibleContent>
             </Collapsible>
 
-            <Button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700">
+            <Button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700" disabled={isSubmitting}>
               <Send className="w-4 h-4 mr-2" />
-              Submit Report
+              {isSubmitting ? "Submitting..." : "Submit Report"}
             </Button>
           </form>
         </CardContent>
