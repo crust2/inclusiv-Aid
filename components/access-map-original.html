@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>AccessMap — Hybrid Facilities Input</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+
+    <style>
+        body { margin:0; font-family: "Segoe UI", Arial, sans-serif; }
+        #controls {
+            position: sticky; top:0; z-index:1000;
+            display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+            padding:10px; background:#fff; border-bottom:1px solid #ddd;
+        }
+        #controls label { margin-right:10px; font-size:14px; }
+        button { padding:8px 12px; border-radius:6px; border:none; cursor:pointer; font-weight:600; }
+        #addBtn { background:#16a34a; color:#fff; }
+        #clearBtn { background:#dc2626; color:#fff; }
+        #voiceBtn { background:#2563eb; color:#fff; border-radius:50%; width:40px; height:40px; }
+        #status { margin-left:8px; color:#444; min-width:200px; }
+
+        #map { height: 88vh; width:100%; }
+
+        /* Modal for custom name and facilities */
+        .modal-backdrop {
+            display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); align-items:center; justify-content:center;
+            z-index:2000;
+        }
+        .modal {
+            background:#fff; padding:16px; border-radius:8px; width:320px; box-shadow:0 6px 24px rgba(0,0,0,0.2);
+        }
+        .modal h3 { margin:0 0 8px 0; font-size:18px; }
+        .modal label { display:block; margin:8px 0; font-size:14px; }
+        .modal input[type="text"] { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; }
+        .modal .actions { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+        .btn-secondary { background:#e5e7eb; color:#111; }
+        .btn-primary { background:#111827; color:#fff; }
+
+        /* small responsive tweaks */
+        @media (max-width:420px) {
+            .modal { width:90%; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <label><input type="checkbox" value="♿ Wheelchair Accessible"> Wheelchair</label>
+        <label><input type="checkbox" value="🟡 Has Braille"> Braille</label>
+        <label><input type="checkbox" value="🛗 Lift Available"> Lift</label>
+        <label><input type="checkbox" value="❌ Not Accessible"> Not Accessible</label>
+
+        <button id="addBtn">➕ Add Place</button>
+        <button id="clearBtn">🗑 Clear All</button>
+        <button id="voiceBtn" title="Voice search">🎤</button>
+        <span id="status">Ready</span>
+    </div>
+
+    <div id="map"></div>
+
+
+    <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true">
+        <div class="modal" role="document">
+            <h3>Add place details</h3>
+            <label>Place name
+                <input id="placeNameInput" type="text" placeholder="Enter place name"/>
+            </label>
+            <div id="facPreview" style="font-size:13px;color:#555;margin-top:6px;"></div>
+            <label>Other facilities (optional, separated by commas)
+                <input id="facilitiesInput" type="text" placeholder="e.g., Guide dog friendly, Ramp"/>
+            </label>
+            <div class="actions">
+                <button id="cancelPlace" class="btn-secondary">Cancel</button>
+                <button id="savePlace" class="btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+
+    <script>
+        // ---------- Setup ----------
+        const map = L.map('map').setView([12.8406, 80.1531], 15);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(map);
+
+        // Fix for default Leaflet marker icons not showing up
+        delete L.Icon.Default.prototype._getIconUrl;
+        L.Icon.Default.mergeOptions({
+            iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
+            iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
+            shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png'
+        });
+
+        // Define custom icons
+        const accessibleIcon = L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/3719/3719941.png',
+            iconSize: [32, 32],
+            iconAnchor: [16, 32],
+            popupAnchor: [0, -25]
+        });
+
+        const defaultIcon = L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-grey.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34]
+        });
+
+        // Geocoder (typed search). We handle markgeocode ourselves.
+        const geocoderControl = L.Control.geocoder({ defaultMarkGeocode: false }).addTo(map);
+
+        // UI elements
+        const addBtn = document.getElementById('addBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const voiceBtn = document.getElementById('voiceBtn');
+        const statusEl = document.getElementById('status');
+        const modalBackdrop = document.getElementById('modalBackdrop');
+        const placeNameInput = document.getElementById('placeNameInput');
+        const facilitiesInput = document.getElementById('facilitiesInput');
+        const savePlaceBtn = document.getElementById('savePlace');
+        const cancelPlaceBtn = document.getElementById('cancelPlace');
+        const facPreview = document.getElementById('facPreview');
+
+        // storage & layers
+        let rawMarkers = JSON.parse(localStorage.getItem('markers')) || null;
+        const defaultDataset = [
+            { name: "VIT Chennai Main Gate", lat: 12.8406, lng: 80.1531, facilities: ["♿ Wheelchair Accessible"] },
+            { name: "VIT Chennai Library", lat: 12.8440, lng: 80.1520, facilities: ["🛗 Lift Available","🟡 Has Braille"] },
+            { name: "VIT Admin Block", lat: 12.8425, lng: 80.1545, facilities: ["🟡 Has Braille","♿ Wheelchair Accessible"] },
+            { name: "VIT Hostel Gate", lat: 12.8450, lng: 80.1510, facilities: ["❌ Not Accessible"] }
+        ];
+
+        // sanitize or apply default
+        let markers = [];
+        if (Array.isArray(rawMarkers) && rawMarkers.length > 0) {
+            markers = rawMarkers.map(m => {
+                return {
+                    name: m.name || m.rating || "Place",
+                    lat: parseFloat(m.lat) || parseFloat(m.latitude) || 0,
+                    lng: parseFloat(m.lng) || parseFloat(m.longitude) || 0,
+                    facilities: Array.isArray(m.facilities) ? m.facilities : (m.facilities ? [m.facilities] : (m.rating ? [m.rating] : []))
+                };
+            });
+        } else {
+            markers = defaultDataset.slice();
+            localStorage.setItem('markers', JSON.stringify(markers));
+        }
+
+        const markerLayers = []; // store leaflet marker instances for removal
+
+        function addMarkerToMapObj(obj) {
+            const popupHtml = `<b>${obj.name}</b><br>${(obj.facilities && obj.facilities.length) ? obj.facilities.join("<br>") : "No facilities info"}`;
+
+            const hasWheelchair = obj.facilities.includes("♿ Wheelchair Accessible");
+            const markerIcon = hasWheelchair ? accessibleIcon : defaultIcon;
+
+            const layer = L.marker([obj.lat, obj.lng], { icon: markerIcon }).addTo(map).bindPopup(popupHtml);
+            layer.on('popupopen', () => {
+                const text = `${obj.name}. ${ (obj.facilities && obj.facilities.length) ? "Facilities: " + obj.facilities.join(", ") : "No accessibility information available." }`;
+                const ut = new SpeechSynthesisUtterance(text);
+                ut.lang = 'en-IN';
+                window.speechSynthesis.speak(ut);
+            });
+            markerLayers.push(layer);
+            return layer;
+        }
+
+        // render initial markers
+        markers.forEach(m => addMarkerToMapObj(m));
+
+        // ---------- Add Place flow (modal-based) ----------
+        let addMarkerMode = false;
+        let tempCoords = null;
+
+        addBtn.addEventListener('click', () => {
+            addMarkerMode = true;
+            statusEl.textContent = 'Click on the map to choose location for the new place...';
+        });
+
+        // when map clicked in add mode -> show modal
+        map.on('click', (e) => {
+            if (!addMarkerMode) return;
+            tempCoords = e.latlng;
+            const selectedFacilities = Array.from(document.querySelectorAll('#controls input[type=checkbox]:checked'))
+                .map(cb => cb.value);
+            facPreview.innerHTML = `<strong>Selected:</strong><br>${selectedFacilities.length ? selectedFacilities.join('<br>') : '<em>None selected</em>'}`;
+            placeNameInput.value = '';
+            facilitiesInput.value = ''; // Reset custom facilities input
+            modalBackdrop.style.display = 'flex';
+            placeNameInput.focus();
+        });
+
+        // Save from modal
+        savePlaceBtn.addEventListener('click', () => {
+            const name = (placeNameInput.value || '').trim();
+            if (!name) {
+                alert('Please enter a name for the place.');
+                placeNameInput.focus();
+                return;
+            }
+
+            const selectedCheckboxes = Array.from(document.querySelectorAll('#controls input[type=checkbox]:checked'))
+                .map(cb => cb.value);
+
+            const facilitiesText = (facilitiesInput.value || '').trim();
+            const facilitiesArray = facilitiesText ? facilitiesText.split(',').map(f => f.trim()).filter(f => f) : [];
+
+            // Combine both sets of facilities
+            const combinedFacilities = [...selectedCheckboxes, ...facilitiesArray];
+
+            const newMarker = {
+                name,
+                lat: tempCoords.lat,
+                lng: tempCoords.lng,
+                facilities: combinedFacilities
+            };
+
+            // store & render
+            markers.push(newMarker);
+            localStorage.setItem('markers', JSON.stringify(markers));
+            addMarkerToMapObj(newMarker);
+
+            // cleanup
+            modalBackdrop.style.display = 'none';
+            addMarkerMode = false;
+            tempCoords = null;
+            statusEl.textContent = `Added: ${name}`;
+        });
+
+        // Cancel modal
+        cancelPlaceBtn.addEventListener('click', () => {
+            modalBackdrop.style.display = 'none';
+            addMarkerMode = false;
+            tempCoords = null;
+            statusEl.textContent = 'Add cancelled';
+        });
+
+        // Close modal when clicking outside modal content
+        modalBackdrop.addEventListener('click', (ev) => {
+            if (ev.target === modalBackdrop) {
+                modalBackdrop.style.display = 'none';
+                addMarkerMode = false;
+                tempCoords = null;
+                statusEl.textContent = 'Add cancelled';
+            }
+        });
+
+        // ---------- Clear All ----------
+        clearBtn.addEventListener('click', () => {
+            if (!confirm('Clear all markers?')) return;
+            // remove layers
+            markerLayers.forEach(l => map.removeLayer(l));
+            markerLayers.length = 0;
+            markers.length = 0;
+            localStorage.removeItem('markers');
+            statusEl.textContent = 'All markers cleared';
+        });
+
+        // ---------- Typed search (geocoder control) ----------
+        geocoderControl.on('markgeocode', function(e) {
+            const g = e.geocode;
+            const name = g.name || 'Search result';
+            const lat = g.center.lat;
+            const lng = g.center.lng;
+
+            const found = markers.find(m => m.name && m.name.toLowerCase().includes(name.toLowerCase()));
+            if (found) {
+                map.setView([found.lat, found.lng], 17);
+                const layer = markerLayers.find(ly => {
+                    if (!ly.getLatLng) return false;
+                    const ll = ly.getLatLng();
+                    return Math.abs(ll.lat - found.lat) < 0.00001 && Math.abs(ll.lng - found.lng) < 0.00001;
+                });
+                if (layer) layer.openPopup();
+                statusEl.textContent = `Found dataset place: ${found.name}`;
+                return;
+            }
+
+            const newMarker = { name, lat, lng, facilities: [] };
+            markers.push(newMarker);
+            localStorage.setItem('markers', JSON.stringify(markers));
+            addMarkerToMapObj(newMarker);
+            map.setView([lat, lng], 16);
+            statusEl.textContent = `Added marker: ${name} (no facilities info)`;
+        });
+
+        // ---------- Voice search (Nominatim) ----------
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            const recog = new SpeechRecognition();
+            recog.lang = 'en-IN';
+            recog.interimResults = false;
+
+            recog.onstart = () => {
+                voiceBtn.classList.add('listening');
+                statusEl.textContent = 'Listening...';
+            };
+            recog.onend = () => {
+                voiceBtn.classList.remove('listening');
+            };
+            recog.onerror = (e) => {
+                statusEl.textContent = 'Voice error: ' + e.error;
+            };
+
+            recog.onresult = (ev) => {
+                const spoken = ev.results[0][0].transcript;
+                statusEl.textContent = `Heard: "${spoken}". Searching...`;
+
+                const datasetFound = markers.find(m => m.name && m.name.toLowerCase().includes(spoken.toLowerCase()));
+                if (datasetFound) {
+                    map.setView([datasetFound.lat, datasetFound.lng], 17);
+                    const layer = markerLayers.find(ly => {
+                        const ll = ly.getLatLng();
+                        return Math.abs(ll.lat - datasetFound.lat) < 0.00001 && Math.abs(ll.lng - datasetFound.lng) < 0.00001;
+                    });
+                    if (layer) layer.openPopup();
+                    statusEl.textContent = `Found in dataset: ${datasetFound.name}`;
+                    return;
+                }
+
+                const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(spoken);
+                fetch(url).then(r => r.json()).then(results => {
+                    if (!results || results.length === 0) {
+                        statusEl.textContent = 'No results found';
+                        const ut = new SpeechSynthesisUtterance('No accessibility information available for ' + spoken);
+                        window.speechSynthesis.speak(ut);
+                        return;
+                    }
+                    const p = results[0];
+                    const lat = parseFloat(p.lat), lng = parseFloat(p.lon);
+                    map.setView([lat, lng], 16);
+
+                    const newMarker = { name: spoken, lat, lng, facilities: [] };
+                    markers.push(newMarker);
+                    localStorage.setItem('markers', JSON.stringify(markers));
+                    addMarkerToMapObj(newMarker);
+
+                    statusEl.textContent = 'Located: ' + (p.display_name || spoken) + ' (no facilities info)';
+                    const ut = new SpeechSynthesisUtterance('No accessibility information available for ' + spoken);
+                    window.speechSynthesis.speak(ut);
+                }).catch(err => {
+                    console.error(err);
+                    statusEl.textContent = 'Geocoding failed';
+                });
+            };
+
+            voiceBtn.addEventListener('click', () => {
+                try { recog.start(); } catch (e) { console.warn(e); }
+            });
+        } else {
+            voiceBtn.addEventListener('click', () => alert('Speech recognition not supported. Use Chrome.'));
+        }
+    </script>
+</body>
+</html>
