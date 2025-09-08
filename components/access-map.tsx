@@ -17,6 +17,7 @@ interface MarkerData {
 
 export default function AccessMap() {
   const mapRef = useRef<HTMLDivElement>(null)
+  const mapInstanceRef = useRef<any>(null)
   const [map, setMap] = useState<any>(null)
   const [markers, setMarkers] = useState<MarkerData[]>([])
   const [markerLayers, setMarkerLayers] = useState<any[]>([])
@@ -40,7 +41,7 @@ export default function AccessMap() {
 
   // Initialize map and load data
   useEffect(() => {
-    if (typeof window === "undefined" || !mapRef.current) return
+    if (typeof window === "undefined" || !mapRef.current || mapInstanceRef.current) return
 
     // Load Leaflet dynamically
     const loadLeaflet = async () => {
@@ -68,6 +69,8 @@ export default function AccessMap() {
 
       // Initialize map
       const mapInstance = L.map(mapRef.current!).setView([12.8406, 80.1531], 15)
+      mapInstanceRef.current = mapInstance
+
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap",
       }).addTo(mapInstance)
@@ -138,6 +141,13 @@ export default function AccessMap() {
     }
 
     loadLeaflet()
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove()
+        mapInstanceRef.current = null
+      }
+    }
   }, [])
 
   const addMarkerToMap = (markerData: MarkerData, mapInstance: any, L: any) => {
