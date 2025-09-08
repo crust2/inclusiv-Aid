@@ -13,6 +13,7 @@ interface MarkerData {
   lat: number
   lng: number
   facilities: string[]
+  id?: string // Added unique ID for tracking markers
 }
 
 export default function AccessMap() {
@@ -29,14 +30,28 @@ export default function AccessMap() {
   const [selectedFacilities, setSelectedFacilities] = useState<string[]>([])
   const [status, setStatus] = useState("Ready")
   const [isListening, setIsListening] = useState(false)
+  const [editingMarker, setEditingMarker] = useState<MarkerData | null>(null)
+  const [isEditing, setIsEditing] = useState(false)
 
   const facilityOptions = ["♿ Wheelchair Accessible", "🟡 Has Braille", "🛗 Lift Available", "❌ Not Accessible"]
 
   const defaultDataset: MarkerData[] = [
-    { name: "VIT Chennai Main Gate", lat: 12.8406, lng: 80.1531, facilities: ["♿ Wheelchair Accessible"] },
-    { name: "VIT Chennai Library", lat: 12.844, lng: 80.152, facilities: ["🛗 Lift Available", "🟡 Has Braille"] },
-    { name: "VIT Admin Block", lat: 12.8425, lng: 80.1545, facilities: ["🟡 Has Braille", "♿ Wheelchair Accessible"] },
-    { name: "VIT Hostel Gate", lat: 12.845, lng: 80.151, facilities: ["❌ Not Accessible"] },
+    { id: "1", name: "VIT Chennai Main Gate", lat: 12.8406, lng: 80.1531, facilities: ["♿ Wheelchair Accessible"] },
+    {
+      id: "2",
+      name: "VIT Chennai Library",
+      lat: 12.844,
+      lng: 80.152,
+      facilities: ["🛗 Lift Available", "🟡 Has Braille"],
+    },
+    {
+      id: "3",
+      name: "VIT Admin Block",
+      lat: 12.8425,
+      lng: 80.1545,
+      facilities: ["🟡 Has Braille", "♿ Wheelchair Accessible"],
+    },
+    { id: "4", name: "VIT Hostel Gate", lat: 12.845, lng: 80.151, facilities: ["❌ Not Accessible"] },
   ]
 
   // Initialize map and load data
@@ -94,7 +109,7 @@ export default function AccessMap() {
             return
           }
 
-          const newMarker = { name, lat, lng, facilities: [] }
+          const newMarker = { id: Date.now().toString(), name, lat, lng, facilities: [] }
           addMarkerToMap(newMarker, mapInstance, L)
           mapInstance.setView([lat, lng], 16)
           setStatus(`Added marker: ${name} (no facilities info)`)
@@ -104,9 +119,10 @@ export default function AccessMap() {
 
       // Handle map clicks
       mapInstance.on("click", (e: any) => {
-        if (!addMarkerMode) return
         setTempCoords(e.latlng)
         setShowModal(true)
+        setAddMarkerMode(false) // Reset add marker mode
+        setStatus("Adding new place at clicked location...")
       })
 
       setMap(mapInstance)
@@ -119,7 +135,8 @@ export default function AccessMap() {
         try {
           const parsed = JSON.parse(savedMarkers)
           if (Array.isArray(parsed) && parsed.length > 0) {
-            initialMarkers = parsed.map((m: any) => ({
+            initialMarkers = parsed.map((m: any, index: number) => ({
+              id: m.id || Date.now().toString() + index, // Ensure all markers have IDs
               name: m.name || m.rating || "Place",
               lat: Number.parseFloat(m.lat) || Number.parseFloat(m.latitude) || 0,
               lng: Number.parseFloat(m.lng) || Number.parseFloat(m.longitude) || 0,
@@ -151,7 +168,16 @@ export default function AccessMap() {
   }, [])
 
   const addMarkerToMap = (markerData: MarkerData, mapInstance: any, L: any) => {
-    const popupHtml = `<b>${markerData.name}</b><br>${markerData.facilities.length ? markerData.facilities.join("<br>") : "No facilities info"}`
+    const popupHtml = `
+      <div>
+        <b>${markerData.name}</b><br>
+        ${markerData.facilities.length ? markerData.facilities.join("<br>") : "No facilities info"}
+        <br><br>
+        <button onclick="window.editMarker('${markerData.id}')" style="background: #3b82f6; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+          ✏️ Edit Place
+        </button>
+      </div>
+    `
 
     const hasWheelchair = markerData.facilities.includes("♿ Wheelchair Accessible")
 
@@ -184,9 +210,31 @@ export default function AccessMap() {
     setMarkerLayers((prev) => [...prev, layer])
   }
 
+  useEffect(() => {
+    ;(window as any).editMarker = (markerId: string) => {
+      const markerToEdit = markers.find((m) => m.id === markerId)
+      if (markerToEdit) {
+        handleEditPlace(markerToEdit)
+      }
+    }
+
+    return () => {
+      delete (window as any).editMarker
+    }
+  }, [markers])
+
   const handleAddPlace = () => {
-    setAddMarkerMode(true)
-    setStatus("Click on the map to choose location for the new place...")
+    setStatus("Click anywhere on the map to add a new place...")
+  }
+
+  const handleEditPlace = (marker: MarkerData) => {
+    setEditingMarker(marker)
+    setIsEditing(true)
+    setPlaceName(marker.name)
+    setSelectedFacilities(marker.facilities.filter((f) => facilityOptions.includes(f)))
+    setCustomFacilities(marker.facilities.filter((f) => !facilityOptions.includes(f)).join(", "))
+    setShowModal(true)
+    setStatus(`Editing: ${marker.name}`)
   }
 
   const handleSavePlace = () => {
@@ -204,30 +252,60 @@ export default function AccessMap() {
 
     const combinedFacilities = [...selectedFacilities, ...facilitiesArray]
 
-    const newMarker: MarkerData = {
-      name: placeName,
-      lat: tempCoords.lat,
-      lng: tempCoords.lng,
-      facilities: combinedFacilities,
-    }
+    if (isEditing && editingMarker) {
+      // Update existing marker
+      const updatedMarkers = markers.map((marker) =>
+        marker.id === editingMarker.id ? { ...marker, name: placeName, facilities: combinedFacilities } : marker,
+      )
+      setMarkers(updatedMarkers)
+      localStorage.setItem("markers", JSON.stringify(updatedMarkers))
 
-    const updatedMarkers = [...markers, newMarker]
-    setMarkers(updatedMarkers)
-    localStorage.setItem("markers", JSON.stringify(updatedMarkers))
+      // Remove old marker layers and re-add all markers
+      markerLayers.forEach((layer) => {
+        if (map) map.removeLayer(layer)
+      })
+      setMarkerLayers([])
 
-    if (map) {
-      const L = (window as any).L
-      addMarkerToMap(newMarker, map, L)
+      // Re-add all markers with updated data
+      if (map) {
+        const L = (window as any).L
+        updatedMarkers.forEach((marker) => {
+          addMarkerToMap(marker, map, L)
+        })
+      }
+
+      setStatus(`Updated: ${placeName}`)
+    } else {
+      // Add new marker
+      const newMarker: MarkerData = {
+        id: Date.now().toString(),
+        name: placeName,
+        lat: tempCoords.lat,
+        lng: tempCoords.lng,
+        facilities: combinedFacilities,
+      }
+
+      const updatedMarkers = [...markers, newMarker]
+      setMarkers(updatedMarkers)
+      localStorage.setItem("markers", JSON.stringify(updatedMarkers))
+
+      if (map) {
+        const L = (window as any).L
+        addMarkerToMap(newMarker, map, L)
+      }
+
+      setStatus(`Added: ${placeName}`)
     }
 
     // Reset form
     setShowModal(false)
     setAddMarkerMode(false)
+    setIsEditing(false)
+    setEditingMarker(null)
     setTempCoords(null)
     setPlaceName("")
     setCustomFacilities("")
     setSelectedFacilities([])
-    setStatus(`Added: ${placeName}`)
   }
 
   const handleClearAll = () => {
@@ -241,6 +319,18 @@ export default function AccessMap() {
     setMarkers([])
     localStorage.removeItem("markers")
     setStatus("All markers cleared")
+  }
+
+  const handleCancel = () => {
+    setShowModal(false)
+    setAddMarkerMode(false)
+    setIsEditing(false)
+    setEditingMarker(null)
+    setTempCoords(null)
+    setPlaceName("")
+    setCustomFacilities("")
+    setSelectedFacilities([])
+    setStatus(isEditing ? "Edit cancelled" : "Add cancelled")
   }
 
   const handleVoiceSearch = () => {
@@ -298,7 +388,7 @@ export default function AccessMap() {
 
           if (map) {
             map.setView([lat, lng], 16)
-            const newMarker = { name: spoken, lat, lng, facilities: [] }
+            const newMarker = { id: Date.now().toString(), name: spoken, lat, lng, facilities: [] }
             const updatedMarkers = [...markers, newMarker]
             setMarkers(updatedMarkers)
             localStorage.setItem("markers", JSON.stringify(updatedMarkers))
@@ -374,7 +464,7 @@ export default function AccessMap() {
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[2000]">
           <div className="bg-white p-4 rounded-lg w-80 max-w-[90vw] shadow-xl">
-            <h3 className="text-lg font-semibold mb-2">Add place details</h3>
+            <h3 className="text-lg font-semibold mb-2">{isEditing ? "Edit place details" : "Add place details"}</h3>
 
             <Label className="block mb-2">
               Place name
@@ -403,18 +493,10 @@ export default function AccessMap() {
             </Label>
 
             <div className="flex gap-2 justify-end">
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setShowModal(false)
-                  setAddMarkerMode(false)
-                  setTempCoords(null)
-                  setStatus("Add cancelled")
-                }}
-              >
+              <Button variant="secondary" onClick={handleCancel}>
                 Cancel
               </Button>
-              <Button onClick={handleSavePlace}>Save</Button>
+              <Button onClick={handleSavePlace}>{isEditing ? "Update" : "Save"}</Button>
             </div>
           </div>
         </div>
